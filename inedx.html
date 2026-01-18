@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Particle Controller</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        #info { position: absolute; bottom: 20px; left: 20px; color: #00ffee; pointer-events: none; }
+        canvas { display: block; }
+        .tp-dfwv { top: 20px !important; right: 20px !important; }
+    </style>
+</head>
+<body>
+
+<div id="info">Gesture: <span id="status">Waiting for Camera...</span></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.150.0/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tweakpane@3.1.0/dist/tweakpane.min.js"></script>
+
+<script>
+// --- CONFIGURATION ---
+const state = {
+    template: 'Saturn',
+    color: '#00ffee',
+    size: 0.05,
+    lastSwap: 0,
+    currentScale: 1
+};
+
+const templates = ['Saturn', 'Hearts', 'Flower', 'Statue'];
+let scene, camera, renderer, particles, material;
+
+// --- THREE.JS ENGINE ---
+function initThree() {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    camera.position.z = 12;
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    loadTemplate(state.template);
+    initUI();
+    animate();
+}
+
+function loadTemplate(name) {
+    if (particles) scene.remove(particles);
+    const geometry = new THREE.BufferGeometry();
+    const count = 10000;
+    const pos = new Float32Array(count * 3);
+
+    for (let i = 0; i < count; i++) {
+        let x, y, z;
+        const i3 = i * 3;
+        
+        if (name === 'Hearts') {
+            const t = Math.random() * Math.PI * 2;
+            x = 16 * Math.pow(Math.sin(t), 3) / 2.5;
+            y = (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) / 2.5;
+            z = (Math.random() - 0.5) * 2;
+        } else if (name === 'Saturn') {
+            const r = i < 5000 ? Math.random() * 3 : 5 + Math.random() * 2;
+            const a = Math.random() * Math.PI * 2;
+            x = Math.cos(a) * r;
+            z = Math.sin(a) * r;
+            y = i < 5000 ? (Math.random()-0.5)*6 : (Math.random()-0.5)*0.2;
+        } else {
+            // Flower/Statue placeholder (Spherical)
+            const u = Math.random();
+            const v = Math.random();
+            const theta = 2 * Math.PI * u;
+            const phi = Math.acos(2 * v - 1);
+            x = 5 * Math.sin(phi) * Math.cos(theta);
+            y = 5 * Math.sin(phi) * Math.sin(theta);
+            z = 5 * Math.cos(phi);
+        }
+        pos[i3] = x; pos[i3+1] = y; pos[i3+2] = z;
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    material = new THREE.PointsMaterial({ 
+        color: state.color, 
+        size: state.size, 
+        transparent: true, 
+        blending: THREE.AdditiveBlending 
+    });
+    particles = new THREE.Points(geometry, material);
+    scene.add(particles);
+}
+
+// --- HAND TRACKING & GESTURE LOGIC ---
+const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5 });
+
+hands.onResults((results) => {
+    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
+    const landmarks = results.multiHandLandmarks[0];
+    const statusEl = document.getElementById('status');
+
+    // 1. SPREAD / SHRINK (Distance between Thumb Tip and Pinky Tip)
+    const dx = landmarks[4].x - landmarks[20].x;
+    const dy = landmarks[4].y - landmarks[20].y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    
+    // Smooth Scale Mapping
+    state.targetScale = THREE.MathUtils.mapLinear(dist, 0.05, 0.4, 0.3, 3.5);
+    statusEl.innerText = dist < 0.1 ? "SHRINK" : "SPREAD";
+
+    // 2. SWAP LEFT / RIGHT (Horizontal position of the Wrist)
+    const wristX = landmarks[0].x;
+    const now = Date.now();
+    if (now - state.lastSwap > 1000) { // 1 second cooldown
+        if (wristX < 0.15) { // Swap Right (Hand moves to the left of camera)
+            cycleTemplate(1);
+            state.lastSwap = now;
+            statusEl.innerText = "SWAP RIGHT";
+        } else if (wristX > 0.85) { // Swap Left
+            cycleTemplate(-1);
+            state.lastSwap = now;
+            statusEl.innerText = "SWAP LEFT";
+        }
+    }
+});
+
+function cycleTemplate(dir) {
+    let idx = templates.indexOf(state.template);
+    idx = (idx + dir + templates.length) % templates.length;
+    state.template = templates[idx];
+    loadTemplate(state.template);
+}
+
+// --- INITIALIZE CAMERA ---
+const videoElement = document.createElement('video');
+const cameraDevice = new Camera(videoElement, {
+    onFrame: async () => { await hands.send({image: videoElement}); },
+    width: 640, height: 480
+});
+
+function initUI() {
+    const pane = new Tweakpane.Pane();
+    pane.addInput(state, 'color').on('change', (ev) => material.color.set(ev.value));
+    pane.addInput(state, 'template', { options: { Saturn: 'Saturn', Hearts: 'Hearts', Flower: 'Flower' }})
+        .on('change', (ev) => loadTemplate(ev.value));
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    if (particles) {
+        state.currentScale = THREE.MathUtils.lerp(state.currentScale, state.targetScale || 1, 0.1);
+        particles.scale.setScalar(state.currentScale);
+        particles.rotation.y += 0.003;
+    }
+    renderer.render(scene, camera);
+}
+
+initThree();
+cameraDevice.start();
+</script>
+</body>
+</html>

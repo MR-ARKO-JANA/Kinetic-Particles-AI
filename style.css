@@ -1,0 +1,28 @@
+body {
+  margin: 0;
+  background: radial-gradient(circle at top, #111, #000);
+  overflow: hidden;
+  font-family: system-ui, sans-serif;
+}
+
+.panel {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  display: flex;
+  gap: 12px;
+  padding: 14px 18px;
+  background: rgba(255,255,255,0.08);
+  backdrop-filter: blur(14px);
+  border-radius: 16px;
+}
+
+select, input {
+  background: #0f0f0f;
+  color: #fff;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+video { display: none; }
